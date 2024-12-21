@@ -1,3 +1,45 @@
+# Banglish to Bengali Transliteration Model
+
+### Project Overview
+
+Built a custom transliteration model to convert Banglish (Bengali written in English letters) to proper Bengali script. This was developed to help Bengali speakers type in their language even without a Bengali keyboard installed.
+
+### Technical Implementation
+
+- Fine-tuned Facebook's MBart-50 multilingual model
+
+- Used the SKNahin/bengali-transliteration-data dataset from Hugging Face
+
+- Implemented using the Transformers library for training and inference
+
+### Data Processing
+
+- Input: Romanized Bengali text (Banglish)
+
+- Output: Proper Bengali Unicode text
+
+- Used dataset splitting (training/validation sets)
+
+- Applied appropriate tokenization for sequence-to-sequence tasks
+
+### Training Process
+
+- Model: MBart-50 (base model)
+
+- Training Type: Fine-tuning on transliteration task
+
+- Library: Hugging Face Transformers
+
+- Framework: PyTorch
+
+
+
+
+
+
+
+
+
 # Database Schema
 
 ## **1. UserIngredients Table**
