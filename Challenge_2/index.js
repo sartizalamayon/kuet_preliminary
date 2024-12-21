@@ -43,19 +43,6 @@ const generationConfig = {
 };
 
 
-// async function processRecipe(inputText) {
-//   try {
-//       const chatSession = model.startChat({ generationConfig });
-//       const prompt = `I have this recipe scattered. Your job will be give me the recipe data for this.\n${inputText}\n`;
-      
-//       const result = await chatSession.sendMessage(prompt);
-//       return JSON.parse(result.response.text());
-//   } catch (error) {
-//       console.error("Error processing recipe:", error);
-//       throw new Error("Failed to process recipe with Gemini API");
-//   }
-// }
-
 async function processRecipeImage(filePath) {
   try {
       // Read the image file as buffer
@@ -229,7 +216,34 @@ const client = new MongoClient(uri, {
         const recipeCollection = db.collection("Recipe");
         const recipeIngredientsCollection = db.collection("RecipeIngredients");
 
-
+        /*
+API: Add a New Recipe
+Route: /recipes
+Method: POST
+Sample Payload (multipart/form-data):
+{
+    "file": "recipe-image.jpg" // Optional
+    "recipeText": "Recipe description..." // Optional
+}
+Sample Response:
+{
+    "message": "Recipe added successfully",
+    "recipe_id": "648df63f93a2f234e4567890",
+    "recipe": {
+        "name": "Recipe Name",
+        "description": "Recipe Description",
+        "taste": "Sweet",
+        "cuisine": "Italian",
+        "prep_time": 30,
+        "steps": "Step 1...",
+        "ingredients": {
+            "name": "Ingredient",
+            "quantity_required": 2,
+            "unit": "cups"
+        }
+    }
+}
+*/
         app.post("/recipes", upload.single("file"), async (req, res) => {
           try {
               const { recipeText } = req.body;
@@ -274,6 +288,26 @@ const client = new MongoClient(uri, {
               });
           }
       });
+      /*
+API: Retrieve All Recipes
+Route: /recipes
+Method: GET
+Sample Response:
+[
+    {
+        "_id": "648df63f93a2f234e4567890",
+        "name": "Recipe Name",
+        "description": "Recipe Description",
+        "ingredients": [
+            {
+                "name": "Ingredient",
+                "quantity_required": 2,
+                "unit": "cups"
+            }
+        ]
+    }
+]
+*/
         
         // API: Retrieve All Favorite Recipes
         app.get("/recipes", async (req, res) => {
@@ -295,12 +329,49 @@ const client = new MongoClient(uri, {
               res.status(500).send({ error: "Failed to retrieve recipes." });
           }
       });
+      
+
+      /*
+API: Download Recipes Text File
+Route: /recipes/download
+Method: GET
+Response: Text file (my_fav_recipes.txt)
+*/
 
 
 
 
-
-
+app.get("/recipes/download", async (req, res) => {
+  try {
+      const recipes = await recipeCollection.find().toArray();
+      let fileContent = "";
+      
+      for (const recipe of recipes) {
+          const ingredients = await recipeIngredientsCollection
+              .find({ recipe_id: recipe._id })
+              .toArray();
+          
+          fileContent += `Recipe: ${recipe.name}\n`;
+          fileContent += `Description: ${recipe.description}\n`;
+          fileContent += `Cuisine: ${recipe.cuisine}\n`;
+          fileContent += `Taste: ${recipe.taste}\n`;
+          fileContent += `Preparation Time: ${recipe.prep_time} minutes\n`;
+          fileContent += `\nIngredients:\n`;
+          ingredients.forEach(ing => {
+              fileContent += `- ${ing.name}: ${ing.quantity_required} ${ing.unit}\n`;
+          });
+          fileContent += `\nSteps:\n${recipe.steps}\n`;
+          fileContent += `----------------------------------------\n\n`;
+      }
+      
+      res.setHeader('Content-Type', 'text/plain');
+      res.setHeader('Content-Disposition', 'attachment; filename=my_fav_recipes.txt');
+      res.send(fileContent);
+  } catch (error) {
+      console.error("Error downloading recipes:", error);
+      res.status(500).send({ error: "Failed to download recipes." });
+  }
+});
 
         
 
