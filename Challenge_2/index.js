@@ -13,22 +13,72 @@ const port = process.env.PORT || 3000;
 const genAI = new GoogleGenerativeAI(process.env.GeminiApi);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
+// Updated generation config with response schema
 const generationConfig = {
   temperature: 1,
   topP: 0.95,
   topK: 40,
   maxOutputTokens: 8192,
-  responseMimeType: "application/json"
+  responseMimeType: "application/json",
+  responseSchema: {
+      type: "object",
+      properties: {
+          name: { type: "string" },
+          description: { type: "string" },
+          taste: { type: "string" },
+          cuisine: { type: "string" },
+          prep_time: { type: "number" },
+          steps: { type: "string" },
+          ingredients: {
+              type: "object",
+              properties: {
+                  name: { type: "string" },
+                  quantity_required: { type: "number" },
+                  unit: { type: "string" }
+              }
+          }
+      },
+      required: ["name", "description", "prep_time", "steps", "ingredients"]
+  }
 };
 
-async function processRecipeWithGemini(recipeText) {
-  const chatSession = model.startChat({ generationConfig });
-  const result = await chatSession.sendMessage(recipeText);
-  const response = result.response.text();
-  
-  // Remove markdown formatting if present
-  const cleanJson = response.replace(/```json\n|```/g, '');
-  return JSON.parse(cleanJson);
+
+// async function processRecipe(inputText) {
+//   try {
+//       const chatSession = model.startChat({ generationConfig });
+//       const prompt = `I have this recipe scattered. Your job will be give me the recipe data for this.\n${inputText}\n`;
+      
+//       const result = await chatSession.sendMessage(prompt);
+//       return JSON.parse(result.response.text());
+//   } catch (error) {
+//       console.error("Error processing recipe:", error);
+//       throw new Error("Failed to process recipe with Gemini API");
+//   }
+// }
+
+async function processRecipeImage(filePath) {
+  try {
+      // Read the image file as buffer
+      const imageData = await fs.readFile(filePath);
+      
+      // Create a Part object with the image data
+      const imagePart = {
+          inlineData: {
+              data: imageData.toString('base64'),
+              mimeType: "image/jpeg"
+          }
+      };
+
+      const textPart = { text: "Extract the recipe information from this image and format it according to the schema:" };
+      
+      const chatSession = model.startChat({ generationConfig });
+      const result = await chatSession.sendMessage([textPart, imagePart]);
+      
+      return JSON.parse(result.response.text());
+  } catch (error) {
+      console.error("Error processing image:", error);
+      throw new Error("Failed to process recipe image with Gemini API");
+  }
 }
 
 app.use(cors({
@@ -37,23 +87,35 @@ app.use(cors({
 }));
 app.use(express.json());
 
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.b6ckjyi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const upload = multer({ dest: "uploads/" });
 
-// Function to process text or image with Gemini API
 async function processRecipe(inputText) {
-  try {
-    const chatSession = model.startChat({ generationConfig });
-    const result = await chatSession.sendMessage(inputText);
+  const maxRetries = 3;
+  const baseDelay = 1000; // 1 second
 
-    // Extract and clean the response
-    const response = result.response.text();
-    const cleanJson = response.replace(/```json\n|```/g, "");
-    return JSON.parse(cleanJson); // Parse the response into JSON
-  } catch (error) {
-    console.error("Error processing recipe:", error);
-    throw new Error("Failed to process recipe with Gemini API.");
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+          const chatSession = model.startChat({ generationConfig });
+          const prompt = `I have this recipe scattered. Your job will be give me the recipe data for this.\n${inputText}\n`;
+          
+          const result = await chatSession.sendMessage(prompt);
+          return JSON.parse(result.response.text());
+      } catch (error) {
+          if (error.status === 429) { // Rate limit error
+              const delay = baseDelay * Math.pow(2, attempt);
+              console.log(`Rate limited. Retrying in ${delay/1000} seconds...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              
+              if (attempt === maxRetries - 1) {
+                  throw new Error("Rate limit exceeded after maximum retries");
+              }
+              continue;
+          }
+          throw error;
+      }
   }
 }
 
@@ -173,11 +235,9 @@ const client = new MongoClient(uri, {
               const { recipeText } = req.body;
               let recipeData;
       
-              // Process recipe from file or text
               if (req.file) {
                   const filePath = req.file.path;
-                  const fileContent = await fs.readFile(filePath, "utf8");
-                  recipeData = await processRecipe(fileContent);
+                  recipeData = await processRecipeImage(filePath);
                   // Cleanup uploaded file
                   await fs.unlink(filePath);
               } else if (recipeText) {
@@ -193,18 +253,13 @@ const client = new MongoClient(uri, {
               };
               const recipeResult = await recipeCollection.insertOne(recipe);
       
-              // Store ingredients separately if present
+              // Store ingredients separately
               if (recipeData.ingredients) {
                   await recipeIngredientsCollection.insertOne({
                       recipe_id: recipeResult.insertedId,
                       ...recipeData.ingredients
                   });
               }
-      
-              // Append to text file with delimiter
-              const formattedRecipe = JSON.stringify(recipeData, null, 2);
-              await fs.appendFile("my_fav_recipes.txt", 
-                  `---RECIPE_START---\n${formattedRecipe}\n---RECIPE_END---\n`);
       
               res.status(201).send({ 
                   message: "Recipe added successfully", 
@@ -213,7 +268,10 @@ const client = new MongoClient(uri, {
               });
           } catch (error) {
               console.error("Error adding recipe:", error);
-              res.status(500).send({ error: "Failed to add recipe." });
+              res.status(500).send({ 
+                  error: "Failed to add recipe.",
+                  details: error.message 
+              });
           }
       });
         
