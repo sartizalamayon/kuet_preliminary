@@ -108,7 +108,13 @@ app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.b6ckjyi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-const upload = multer({ dest: "uploads/" });
+// const upload = multer({ dest: "uploads/" });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+      fileSize: 5 * 1024 * 1024 // 5MB limit
+  }
+});
 
 async function processRecipe(inputText) {
   const maxRetries = 3;
@@ -275,50 +281,62 @@ Sample Response:
     }
 }
 */
-        app.post("/recipes", upload.single("file"), async (req, res) => {
-          try {
-              const { recipeText } = req.body;
-              let recipeData;
-      
-              if (req.file) {
-                  const filePath = req.file.path;
-                  recipeData = await processRecipeImage(filePath);
-                  // Cleanup uploaded file
-                  await fs.unlink(filePath);
-              } else if (recipeText) {
-                  recipeData = await processRecipe(recipeText);
-              } else {
-                  return res.status(400).send({ error: "No recipe text or file provided." });
+app.post("/recipes", upload.single("file"), async (req, res) => {
+  try {
+      const { recipeText } = req.body;
+      let recipeData;
+
+      if (req.file) {
+          // Instead of reading from file path, use the buffer directly
+          const imageBuffer = req.file.buffer;
+          const base64Image = imageBuffer.toString('base64');
+          
+          const imagePart = {
+              inlineData: {
+                  data: base64Image,
+                  mimeType: req.file.mimetype
               }
-      
-              // Store in MongoDB
-              const recipe = {
-                  ...recipeData,
-                  created_at: new Date()
-              };
-              const recipeResult = await recipeCollection.insertOne(recipe);
-      
-              // Store ingredients separately
-              if (recipeData.ingredients) {
-                  await recipeIngredientsCollection.insertOne({
-                      recipe_id: recipeResult.insertedId,
-                      ...recipeData.ingredients
-                  });
-              }
-      
-              res.status(201).send({ 
-                  message: "Recipe added successfully", 
-                  recipe_id: recipeResult.insertedId,
-                  recipe: recipeData 
-              });
-          } catch (error) {
-              console.error("Error adding recipe:", error);
-              res.status(500).send({ 
-                  error: "Failed to add recipe.",
-                  details: error.message 
-              });
-          }
+          };
+
+          const textPart = { text: "Extract the recipe information from this image and format it according to the schema:" };
+          const chatSession = model.startChat({ generationConfig });
+          const result = await chatSession.sendMessage([textPart, imagePart]);
+          recipeData = JSON.parse(result.response.text());
+          
+      } else if (recipeText) {
+          recipeData = await processRecipe(recipeText);
+      } else {
+          return res.status(400).send({ error: "No recipe text or file provided." });
+      }
+
+      // Store in MongoDB
+      const recipe = {
+          ...recipeData,
+          created_at: new Date()
+      };
+      const recipeResult = await recipeCollection.insertOne(recipe);
+
+      // Store ingredients separately
+      if (recipeData.ingredients) {
+          await recipeIngredientsCollection.insertOne({
+              recipe_id: recipeResult.insertedId,
+              ...recipeData.ingredients
+          });
+      }
+
+      res.status(201).send({ 
+          message: "Recipe added successfully", 
+          recipe_id: recipeResult.insertedId,
+          recipe: recipeData 
       });
+  } catch (error) {
+      console.error("Error adding recipe:", error);
+      res.status(500).send({ 
+          error: "Failed to add recipe.",
+          details: error.message 
+      });
+  }
+});
       /*
 API: Retrieve All Recipes
 Route: /recipes
