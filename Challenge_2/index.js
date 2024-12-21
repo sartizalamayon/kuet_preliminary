@@ -68,6 +68,37 @@ async function processRecipeImage(filePath) {
   }
 }
 
+async function getAvailableIngredients(userIngredientsCollection) {
+  const ingredients = await userIngredientsCollection.find().toArray();
+  return ingredients.map(ing => `${ing.name} (${ing.quantity} ${ing.unit})`).join(', ');
+}
+
+async function processChatRequest(userQuery, availableIngredients) {
+  try {
+      const prompt = `You are a helpful cooking assistant. I'll tell you what ingredients I have, and you'll suggest recipes based on my preferences.
+
+Available ingredients in my kitchen: ${availableIngredients}
+
+My request: "${userQuery}"
+
+Please suggest a recipe considering:
+1. Use only the ingredients I have mentioned if possible
+2. If essential ingredients are missing for my desired recipe, suggest an easy alternative and mention what additional ingredients I would need
+3. Be conversational and friendly
+4. Give me a complete recipe with steps if you're suggesting something
+5. If I don't have enough ingredients to make what I want, acknowledge that and suggest alternatives that would be easy to make with commonly available ingredients
+
+Format your response in a conversational way.`;
+
+      const chatSession = model.startChat();
+      const result = await chatSession.sendMessage(prompt);
+      return result.response.text();
+  } catch (error) {
+      console.error("Error processing chat:", error);
+      throw new Error("Failed to process recipe suggestion");
+  }
+}
+
 app.use(cors({
     origin: '*',
     credentials: true
@@ -338,9 +369,6 @@ Method: GET
 Response: Text file (my_fav_recipes.txt)
 */
 
-
-
-
 app.get("/recipes/download", async (req, res) => {
   try {
       const recipes = await recipeCollection.find().toArray();
@@ -373,6 +401,35 @@ app.get("/recipes/download", async (req, res) => {
   }
 });
 
+/*
+API: Get Recipe Suggestions
+Route: /chat/recipe-suggestion
+Method: POST
+Sample Payload:
+{
+    "message": "I want something sweet today"
+}
+Sample Response:
+{
+    "suggestion": "Based on your available ingredients..."
+}
+*/
+app.post("/chat/recipe-suggestion", async (req, res) => {
+  try {
+      const { message } = req.body;
+      if (!message) {
+          return res.status(400).send({ error: "No message provided" });
+      }
+
+      const availableIngredients = await getAvailableIngredients(userIngredientsCollection);
+      const suggestion = await processChatRequest(message, availableIngredients);
+      
+      res.status(200).send({ suggestion });
+  } catch (error) {
+      console.error("Error in recipe suggestion:", error);
+      res.status(500).send({ error: "Failed to get recipe suggestion" });
+  }
+});
         
 
         app.get("/", (req, res) => {
